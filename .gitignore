@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated slates, exports, and the API response cache.
+out/
+data/cache/
