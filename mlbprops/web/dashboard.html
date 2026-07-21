@@ -286,7 +286,7 @@ const COMMON_LINES = {
   doubles: [0.5], triples: [0.5], walks: [0.5, 1.5],
   batter_strikeouts: [0.5, 1.5, 2.5],
   pitcher_strikeouts: [3.5, 4.5, 5.5, 6.5, 7.5, 8.5],
-  pitcher_outs: [14.5, 15.5, 16.5, 17.5, 18.5, 19.5],
+  pitcher_outs: [11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5],
   pitcher_earned_runs: [1.5, 2.5, 3.5],
   pitcher_hits_allowed: [3.5, 4.5, 5.5, 6.5], pitcher_walks: [1.5, 2.5]
 };
@@ -322,6 +322,35 @@ function inWords(p) {
   }
   if (!best || best.err > 0.045) return `about 1 in ${Math.round(1 / p)}`;
   return `about ${best.num} in ${best.den}`;
+}
+
+// ---------------------------------------------------------------------------
+// Innings.
+//
+// An out is a third of an inning, and outs-recorded markets are quoted in outs
+// while everyone reads and talks in innings. Baseball notation is exact for a
+// whole number of outs -- 16 outs is 5.1, meaning five innings and one out --
+// so the ladder below converts precisely rather than approximately.
+//
+// Decimal innings and baseball notation genuinely disagree (15.6 outs is 5.2
+// decimal innings but reads as 5.1 in a box score), so outs stay the primary
+// number everywhere and innings are shown alongside, never instead.
+// ---------------------------------------------------------------------------
+const THIRDS = ["", "\u2153", "\u2154"];  // "", 1/3, 2/3
+
+function ipNotation(outs) {
+  const o = Math.round(outs);
+  return `${Math.floor(o / 3)}.${o % 3}`;
+}
+function ipPretty(outs) {
+  const o = Math.round(outs);
+  return `${Math.floor(o / 3)}${THIRDS[o % 3]}`;
+}
+function ipFromMeanOuts(outs) {
+  // Mean outs is fractional; show it to a third so it stays comparable with
+  // the ladder rather than silently switching to decimal innings.
+  const thirds = Math.round(outs);
+  return `${Math.floor(thirds / 3)}${THIRDS[thirds % 3]}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -370,25 +399,45 @@ function mainLine(market, m) {
   if (!lines.length) return null;
   // An explicit override from the line picker wins; otherwise the market's
   // standard line, so every row in a lineup is quoted on the same number.
-  const chosen = state.line !== "auto" ? +state.line : STANDARD_LINE[market];
+  // Pitcher and batter markets carry independent line overrides, so changing
+  // the pitcher market never leaves a batter line applied to it (or vice versa).
+  const slot = MARKET_GROUP_OF[market] === "Pitching" ? state.pitcherLine : state.line;
+  const chosen = slot !== "auto" ? +slot : STANDARD_LINE[market];
   if (chosen !== undefined && lines.includes(chosen)) return chosen;
   if (chosen !== undefined) return chosen;
   return lines[0];
 }
 
-function linePicker() {
-  const lines = COMMON_LINES[state.market] || [];
-  return el("select", {onchange: e => { state.line = e.target.value; render(); }},
+// Line picker for either slot. Batter and pitcher markets keep independent
+// overrides so switching one never leaves the other's line applied.
+function linePicker(marketKey = "market", lineKey = "line") {
+  const market = state[marketKey];
+  const lines = COMMON_LINES[market] || [];
+  const isOuts = market === "pitcher_outs";
+  // Outs markets are quoted in outs but read in innings, so label both.
+  const lab = ln => "Over " + ln + (isOuts ? ` — ${ipNotation(Math.ceil(ln))} IP` : "");
+  return el("select", {onchange: e => { state[lineKey] = e.target.value; render(); }},
     el("option", {value: "auto",
-      selected: state.line === "auto" ? "selected" : null},
-      "Standard (" + (STANDARD_LINE[state.market] ?? "—") + ")"),
+      selected: state[lineKey] === "auto" ? "selected" : null},
+      "Standard (" + (STANDARD_LINE[market] ?? "—") + ")"),
     ...lines.map(ln => el("option", {value: String(ln),
-      selected: String(state.line) === String(ln) ? "selected" : null},
-      "Over " + ln)));
+      selected: String(state[lineKey]) === String(ln) ? "selected" : null},
+      lab(ln))));
+}
+
+// A market picker restricted to one group, so the Matchups view can offer a
+// batter market and a pitcher market as separate controls.
+function marketPickerFor(groupName, onChange, value) {
+  const group = MARKET_GROUPS.find(x => x.group === groupName);
+  if (!group) return el("span", {});
+  return el("select", {onchange: e => onChange(e.target.value)},
+    ...group.markets.map(([k, v]) => el("option",
+      {value: k, selected: value === k ? "selected" : null}, v)));
 }
 
 const state = {
-  tab: "best", game: "all", market: "hits", line: "auto", role: "all",
+  tab: "best", game: "all", market: "hits", line: "auto",
+  pitcherMarket: "pitcher_strikeouts", pitcherLine: "auto", role: "all",
   confirmedOnly: false, q: "",
   propSort: {key: "over", dir: -1}, open: null
 };
@@ -618,7 +667,7 @@ function bestView() {
 // Matchups — the two lineups facing each other, as they do on the field
 // ---------------------------------------------------------------------------
 function playerDetail(p, market) {
-  const mk = p.is_pitcher ? "pitcher_strikeouts" : market;
+  const mk = p.is_pitcher ? state.pitcherMarket : market;
   const m = p.markets[mk];
   const ln = m ? mainLine(mk, m) : null;
   const box = el("div", {style: "margin-top:12px;padding-top:12px;border-top:1px solid var(--grid)"});
@@ -635,7 +684,12 @@ function playerDetail(p, market) {
   const add = (k, v) => { if (v === undefined || v === null || v === "") return;
     kv.appendChild(el("dt", {}, k)); kv.appendChild(el("dd", {}, String(v))); };
   if (p.is_pitcher) {
-    add("Projected IP", ctx.mean_ip);
+    // Quoted in outs with innings alongside. Decimal innings (14.4 outs = 4.8)
+    // and baseball notation (4.2, meaning four and two-thirds) disagree, so
+    // showing the decimal next to the thirds ladder below would read as a
+    // contradiction.
+    const o = p.markets.pitcher_outs;
+    if (o) add("Projected outs", `${o.mean.toFixed(1)} — about ${ipFromMeanOuts(o.mean)} innings`);
     add("Projected pitches", ctx.mean_pitches);
     add("Sample (eff. BF)", ctx.effective_bf);
   } else {
@@ -650,12 +704,51 @@ function playerDetail(p, market) {
       `${bvp.hits}-for-${bvp.ab} · ${bvp.hr} HR · ${bvp.k} K — ${bvp.pa} PA`);
   }
   box.appendChild(kv);
+  if (p.is_pitcher) {
+    const ladder = outsLadder(p.markets.pitcher_outs);
+    if (ladder) box.appendChild(ladder);
+  }
   if (!p.is_pitcher && (ctx.vs_pitcher || {}).pa)
     box.appendChild(el("p", {class: "note", style: "margin-top:6px"},
       "Career-vs-pitcher is shown for interest and is deliberately kept out of the projection — " +
       "at these sample sizes it carries no predictive signal beyond what the full-season numbers " +
       "already say."));
   return box;
+}
+
+// A ladder of "does he record at least N outs", with the innings each out
+// count actually represents. Outs markets are quoted in outs but thought about
+// in innings, and the whole question when betting one is "how deep does he go" --
+// so the useful view is the survival curve, not a single line's probability.
+function outsLadder(m) {
+  if (!m || !m.pmf) return null;
+  const pmf = Object.entries(m.pmf).map(([k, v]) => [+k, +v]);
+  const total = pmf.reduce((s, [, v]) => s + v, 0) || 1;
+  const lo = Math.max(0, Math.floor(m.p10)), hi = Math.ceil(m.p90) + 1;
+  const rows = [];
+  for (let n = lo; n <= hi; n++) {
+    const p = pmf.reduce((s, [k, v]) => s + (k >= n ? v : 0), 0) / total;
+    if (p <= 0.005 || p >= 0.995) continue;
+    rows.push([n, p]);
+  }
+  if (!rows.length) return null;
+
+  const tbl = el("table", {class: "lineup", style: "margin-top:10px"},
+    el("thead", {}, el("tr", {class: "hdr"},
+      el("td", {class: "sl"}, "Outs"), el("td", {class: "pn"}, "Innings"),
+      el("td", {}, "Records at least"), el("td", {}, "Fair"))),
+    el("tbody", {}, ...rows.map(([n, p]) => el("tr", {},
+      el("td", {class: "sl"}, String(n)),
+      el("td", {class: "pn dim"}, `${ipNotation(n)}  (${ipPretty(n)})`),
+      el("td", {}, pct(p)),
+      el("td", {class: "dim odds"}, fairOdds(p))))));
+
+  return el("div", {},
+    el("p", {class: "charttitle", style: "margin-top:14px"}, "How deep he goes"),
+    el("p", {class: "chartsub"},
+      `Projected ${m.mean.toFixed(1)} outs — about ${ipFromMeanOuts(m.mean)} innings. ` +
+      `Each row is the chance he records at least that many.`),
+    tbl);
 }
 
 function sideBlock(game, teamName, isHome, market) {
@@ -669,9 +762,15 @@ function sideBlock(game, teamName, isHome, market) {
     el("h4", {}, teamName));
 
   if (sp) {
-    const k = sp.markets.pitcher_strikeouts, outs = sp.markets.pitcher_outs;
-    const er = sp.markets.pitcher_earned_runs;
-    const kLine = k ? mainLine("pitcher_strikeouts", k) : null;
+    const outs = sp.markets.pitcher_outs;
+    // The quoted probability follows the selected pitcher market. Showing a
+    // strikeout number while the user is looking at outs recorded is the whole
+    // bug this avoids -- the headline must answer the question being asked.
+    const pm = state.pitcherMarket;
+    const sel = sp.markets[pm];
+    const selLine = sel ? mainLine(pm, sel) : null;
+    const selOver = sel && selLine !== null ? overAt(sel, selLine) : null;
+    const isOuts = pm === "pitcher_outs";
     block.appendChild(el("div", {class: "sp",
       onclick: () => { const id = "m|" + teamName + "|sp";
         state.open = state.open === id ? null : id; render(); }},
@@ -679,9 +778,14 @@ function sideBlock(game, teamName, isHome, market) {
         el("div", {class: "n"}, sp.name),
         el("div", {class: "s"}, "Starting pitcher · throws " + (sp.context.throws || "?"))),
       el("div", {class: "s", style: "text-align:right"},
-        `${outs ? (outs.mean / 3).toFixed(1) : "?"} IP · ${k ? k.mean.toFixed(1) : "?"} K · ${er ? er.mean.toFixed(1) : "?"} ER`,
+        outs ? `${outs.mean.toFixed(1)} outs · ${ipFromMeanOuts(outs.mean)} IP` : "",
         el("br"),
-        kLine !== null ? `${pct(overAt(k, kLine))} over ${kLine} K` : "")));
+        // When the selected market IS outs, the line above already states it.
+        sel && !isOuts ? `${label(pm)} ${sel.mean.toFixed(1)}` : "",
+        sel && !isOuts ? el("br") : "",
+        selOver !== null
+          ? `${pct(selOver)} over ${selLine}${isOuts ? ` (${ipNotation(Math.ceil(selLine))} IP)` : ""}`
+          : "")));
   }
 
   const tbody = el("tbody", {});
@@ -727,8 +831,14 @@ function gamesView() {
   const filters = el("div", {class: "filters"},
     el("label", {}, "Game", gameSelect()),
     el("label", {}, "Batter market",
-      marketPicker(v => { state.market = v; state.line = "auto"; render(); }, state.market)),
-    el("label", {}, "Line", linePicker()),
+      marketPickerFor("Batting", v => { state.market = v; state.line = "auto"; render(); },
+        state.market)),
+    el("label", {}, "Batter line", linePicker("market", "line")),
+    el("label", {}, "Pitcher market",
+      marketPickerFor("Pitching",
+        v => { state.pitcherMarket = v; state.pitcherLine = "auto"; render(); },
+        state.pitcherMarket)),
+    el("label", {}, "Pitcher line", linePicker("pitcherMarket", "pitcherLine")),
     el("label", {class: "inline"},
       el("input", {type: "checkbox", checked: state.confirmedOnly ? "checked" : null,
         onchange: e => { state.confirmedOnly = e.target.checked; render(); }}),
@@ -841,8 +951,11 @@ function propsView() {
         onchange: e => { state.confirmedOnly = e.target.checked; render(); }}),
       "Confirmed lineups only"));
 
+  const outsMarket = state.market === "pitcher_outs";
   const cols = [["player", "Player", true], ["game", "Game", true], ["slot", "Slot"],
-    ["proj", "Projected"], ["line", "Line"], ["over", "Chance of over"], ["over", "Fair odds"]];
+    ["proj", "Projected"]];
+  if (outsMarket) cols.push(["proj", "Innings"]);
+  cols.push(["line", "Line"], ["over", "Chance of over"], ["over", "Fair odds"]);
   if (showOdds) cols.push(["price", "Best price"], ["ev", "EV"]);
 
   const thead = el("thead", {}, el("tr", {}, ...cols.map(([k, t, l], i) =>
@@ -863,7 +976,9 @@ function propsView() {
       el("td", {class: "l dim"}, r.game),
       el("td", {}, r.slot),
       el("td", {}, r.proj.toFixed(2)),
-      el("td", {class: "dim"}, "o" + r.line),
+      ...(outsMarket ? [el("td", {class: "dim"}, ipFromMeanOuts(r.proj) + " IP")] : []),
+      el("td", {class: "dim"},
+        "o" + r.line + (outsMarket ? ` (${ipNotation(Math.ceil(r.line))})` : "")),
       el("td", {}, probCell(r.over)),
       el("td", {class: "odds dim"}, fairOdds(r.over)));
     if (showOdds) {
@@ -888,7 +1003,10 @@ function propsView() {
       }
       const c = r.context || {};
       if (r.is_pitcher) {
-        add("Projected IP", c.mean_ip); add("Projected pitches", c.mean_pitches);
+        const o = (r.gameRef.players.find(x => x.name === r.player) || {})
+          .markets?.pitcher_outs;
+        if (o) add("Projected outs", `${o.mean.toFixed(1)} — about ${ipFromMeanOuts(o.mean)} innings`);
+        add("Projected pitches", c.mean_pitches);
       } else {
         add("Lineup slot", r.slot); add("Projected PA", c.mean_pa);
         add("Handedness", (c.bats || "?") + " vs " + (c.opp_sp_throws || "?") + "HP");
@@ -909,7 +1027,11 @@ function propsView() {
               el("p", {class: "chartsub"},
                 `${(DATA.meta?.n_sims || 20000).toLocaleString()} simulated games · ` +
                 `projected ${r.proj.toFixed(2)} · 10th–90th ${r.p10}–${r.p90}`),
-              pmfChart(r.pmf, r.line, {width: 460})),
+              pmfChart(r.pmf, r.line, {width: 460}),
+              r.is_pitcher
+                ? outsLadder((r.gameRef.players.find(x => x.name === r.player) || {})
+                    .markets?.pitcher_outs)
+                : null),
             el("div", {}, kv)))));
     }
   });

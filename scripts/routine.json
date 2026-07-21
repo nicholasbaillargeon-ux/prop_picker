@@ -1,0 +1,30 @@
+{
+  "name": "MLB prop model \u2014 daily refresh",
+  "cron_expression": "0 0,16-23 * * *",
+  "enabled": true,
+  "_comment": "hourly 12pm-8pm ET (16:00-00:00 UTC during EDT)",
+  "job_config": {
+    "ccr": {
+      "environment_id": "env_01DVB54VVswiUnhLoiypf8wN",
+      "session_context": {
+        "model": "claude-sonnet-5",
+        "sources": [
+          {
+            "git_repository": {
+              "url": "https://github.com/nicholasbaillargeon-ux/prop_picker"
+            }
+          }
+        ],
+        "allowed_tools": [
+          "Bash",
+          "Read",
+          "Write",
+          "Edit",
+          "Glob",
+          "Grep",
+          "Artifact"
+        ]
+      }
+    }
+  }
+}
