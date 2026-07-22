@@ -263,7 +263,12 @@ def common_lines(market: str) -> list[float]:
         "batter_strikeouts": [0.5, 1.5, 2.5],
         "hits_runs_rbis": [0.5, 1.5, 2.5, 3.5],
         "pitcher_strikeouts": [3.5, 4.5, 5.5, 6.5, 7.5, 8.5],
-        "pitcher_outs": [14.5, 15.5, 16.5, 17.5, 18.5, 19.5],
+        # Matches the dashboard's own picker range. It offered 11.5 through 21.5
+        # while this stopped at 14.5-19.5, so the five outer lines had no
+        # precomputed probabilities -- and, once hit rates keyed off this table,
+        # no hit rate either.
+        "pitcher_outs": [11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5,
+                         20.5, 21.5],
         "pitcher_earned_runs": [1.5, 2.5, 3.5],
         "pitcher_hits_allowed": [3.5, 4.5, 5.5, 6.5],
         "pitcher_walks": [1.5, 2.5],

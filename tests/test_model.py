@@ -168,6 +168,32 @@ def test_recent_appearances_respects_a_short_history():
     assert len(recent_appearances(logs, 10)) == 2
 
 
+def test_every_market_has_log_extraction():
+    """A market the projection prices but the log parser cannot read would show
+    a blank hit-rate column with no error anywhere."""
+    from mlbprops.markets import ALL_MARKETS
+    from mlbprops.rates import MARKET_LOG_VALUE
+    assert set(ALL_MARKETS) == set(MARKET_LOG_VALUE)
+
+
+def test_line_tables_agree_between_model_and_dashboard():
+    """The dashboard's line picker and `common_lines` must offer the same lines.
+    When they drifted, the picker's outer pitcher-outs lines had no precomputed
+    probability and no hit rate -- a blank cell rather than a visible failure."""
+    import re
+    from pathlib import Path
+
+    from mlbprops.markets import ALL_MARKETS, common_lines
+
+    page = (Path(__file__).resolve().parent.parent
+            / "mlbprops" / "web" / "dashboard.html").read_text(encoding="utf-8")
+    block = re.search(r"const COMMON_LINES = \{(.*?)\n\};", page, re.S).group(1)
+    js = {m.group(1): [float(x) for x in m.group(2).split(",") if x.strip()]
+          for m in re.finditer(r"(\w+):\s*\[([^\]]*)\]", block)}
+    for market in ALL_MARKETS:
+        assert js.get(market) == common_lines(market), market
+
+
 def test_shrinkage_pulls_small_samples_to_league():
     """A 10-PA sample of all strikeouts must not become a 100% K projection."""
     counts = np.zeros(C.N_OUTCOMES)
