@@ -179,6 +179,14 @@ The column shows the count (`7/10`) next to the rate, because "70%" and "7 of
 10" invite very different confidence and only one of them is honest about the
 sample. It is styled more quietly than the model's probability on purpose.
 
+Expect the hit rate to sit a little below the model across the board — about
+3–4 points on the current slate, consistently and in every market. That is not a
+mapping error, it is the definition: a hitter's window is *games played*, since
+StatsAPI's hitting logs carry no start flag to filter on, so a one-PA pinch-hit
+cameo counts the same as a full nine innings and almost never clears a line. The
+model, meanwhile, is projecting a player who is in today's lineup and will bat
+four or five times. Two different questions; the gap between them is structural.
+
 **This is displayed, not modelled.** It deliberately feeds nothing: the
 projection already weights recent games via exponential decay across the whole
 season, which is a strictly better estimator than a hard cutoff at 10. A hit
