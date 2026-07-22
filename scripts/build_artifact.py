@@ -98,13 +98,45 @@ def build(slate_path: Path, out_path: Path) -> Path:
 
     meta = trimmed.get("meta", {})
     stamp = (trimmed.get("generated_utc") or "").replace("T", " ")[:16]
+    slate_date = trimmed.get("date", "")
+    # The refresh routine can fail quietly -- a bad clone, a missing dependency,
+    # an API outage -- and the page it leaves behind looks exactly like a working
+    # one. Only the date in the banner gives it away, and nobody checks a date
+    # they have no reason to doubt. So the page checks for itself: it knows when
+    # it was built, the browser knows what day it is, and a mismatch says so
+    # loudly. A board showing yesterday's lineups is worse than no board.
     banner = f"""
+<p id="stalewarn" class="banner" style="display:none;border-left-color:var(--critical)">
+  <b>&#9888; This board is out of date.</b>
+  <span id="staleage"></span>
+  The hourly refresh did not run or did not finish, so these are not today's
+  games. Do not bet from this page until it updates.
+</p>
 <p class="note" style="margin:0 0 14px">
-  <b>Snapshot</b> of the {trimmed.get('date', '')} slate, built
+  <b>Snapshot</b> of the {slate_date} slate, built
   {stamp} UTC from {meta.get('n_sims', 20000):,} simulated games per matchup.
   Hosted pages cannot reach the MLB feed, so this does not refresh itself &mdash;
   run <code>python -m mlbprops watch</code> locally for the auto-updating board.
-</p>"""
+</p>
+<script>
+(function () {{
+  var slate = "{slate_date}";
+  if (!slate) return;
+  // Compare against the viewer's own calendar date rather than UTC: a US reader
+  // at 9pm ET is still on today's slate while UTC has already rolled over, and
+  // warning them then would be crying wolf every single night.
+  var now = new Date();
+  var today = now.getFullYear() + "-"
+    + String(now.getMonth() + 1).padStart(2, "0") + "-"
+    + String(now.getDate()).padStart(2, "0");
+  if (slate >= today) return;
+  var days = Math.round((new Date(today) - new Date(slate)) / 86400000);
+  document.getElementById("staleage").textContent =
+    "It shows the " + slate + " slate, " + days + (days === 1 ? " day" : " days")
+    + " behind.";
+  document.getElementById("stalewarn").style.display = "block";
+}})();
+</script>"""
     markup = markup.replace('<div id="view"></div>',
                             f'{banner}\n  <div id="view"></div>')
 
