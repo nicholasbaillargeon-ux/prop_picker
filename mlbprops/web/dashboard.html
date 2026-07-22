@@ -728,9 +728,13 @@ function playerDetail(p, market) {
   box.appendChild(el("p", {class: "charttitle"}, p.name + " — " + qualified(mk)));
   if (m) {
     const o = ln !== null ? overAt(m, ln) : null;
+    // The recent count sits on the same line as the model's probability for the
+    // same line, so the two are read against each other rather than separately.
+    const h = ln !== null ? hitRateAt(p.context, mk, ln) : null;
     box.appendChild(el("p", {class: "chartsub"},
       `projected ${m.mean} · 10th–90th ${m.p10}–${m.p90}`
-      + (o !== null ? ` · ${pct(o)} to clear ${ln} (${inWords(o)}, fair ${fairOdds(o)})` : "")));
+      + (o !== null ? ` · ${pct(o)} to clear ${ln} (${inWords(o)}, fair ${fairOdds(o)})` : "")
+      + (h ? ` · cleared it ${h.hit} of his last ${h.of} ${h.basis}` : "")));
     box.appendChild(pmfChart(m.pmf, ln, {width: 420}));
   }
   const ctx = p.context || {};
