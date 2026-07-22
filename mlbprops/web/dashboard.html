@@ -415,6 +415,17 @@ function hitRateCell(h) {
     el("span", {class: "hr-pct dim"}, pct(h.rate)));
 }
 
+// A recommendation's hit rate oriented to the side actually being bet: an Under
+// play wants the games he *failed* to clear it. Counting an Under's history with
+// the Over's numerator is the kind of error nobody notices on a board.
+function hitRateForSide(context, market, line, side) {
+  const h = hitRateAt(context, market, line);
+  if (!h) return null;
+  if ((side || "").toLowerCase() !== "under") return h;
+  const hit = h.of - h.hit;
+  return {...h, hit, rate: h.of ? hit / h.of : 0};
+}
+
 function overFromPmf(pmf, line) {
   let over = 0, total = 0;
   for (const [k, v] of Object.entries(pmf || {})) { total += v; if (+k > line) over += v; }
@@ -670,7 +681,12 @@ function bestView() {
         fig("Market", pct(best.market_prob)),
         fig("Edge", signed(best.edge)),
         fig("EV", (best.ev > 0 ? "▲ " : "▼ ") + signed(best.ev)),
-        fig("Stake", (best.kelly * 100).toFixed(2) + "%")),
+        fig("Stake", (best.kelly * 100).toFixed(2) + "%"),
+        ...(() => {
+          const h = hitRateForSide(best.context, best.market, best.line, best.side);
+          return h ? [fig(h.basis === "starts" ? "Last 5 starts" : "Last 10 games",
+            `${h.hit}/${h.of}`)] : [];
+        })()),
       reasonChips(best.reasons)));
 
     parts.push(el("p", {class: "note"},
@@ -690,7 +706,11 @@ function bestView() {
           el("span", {}, "EV ", el("b", {class: b.ev > 0 ? "ev-pos" : "ev-neg"},
             (b.ev > 0 ? "▲" : "▼") + signed(b.ev))),
           el("span", {}, "model ", el("b", {}, pct(b.model_prob))),
-          el("span", {}, "conf ", el("b", {}, pct(b.confidence))))))));
+          el("span", {}, "conf ", el("b", {}, pct(b.confidence))),
+          ...(() => {
+            const h = hitRateForSide(b.context, b.market, b.line, b.side);
+            return h ? [el("span", {}, "last ", el("b", {}, `${h.hit}/${h.of}`))] : [];
+          })())))));
   }
 
   parts.push(gamePicks());
