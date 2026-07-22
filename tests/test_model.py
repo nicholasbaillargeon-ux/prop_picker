@@ -33,8 +33,10 @@ from mlbprops.rates import (
     counts_from_hitting,
     counts_from_pitching,
     estimate_batter,
+    hit_rates,
     neutralize,
     recency_weights,
+    recent_appearances,
     shrink,
 )
 from mlbprops.report import normalize_name
@@ -78,6 +80,92 @@ def test_empty_stat_line_is_safe():
     counts, pa = counts_from_hitting({})
     assert pa == 0
     assert counts.sum() == 0
+
+
+# ---------------------------------------------------------------------------
+# Hit rates (displayed history, not model input)
+# ---------------------------------------------------------------------------
+
+def _hit_log(date, hits, pa=4, **extra):
+    line = {"_date": date, "plateAppearances": pa, "atBats": pa, "hits": hits,
+            "doubles": 0, "triples": 0, "homeRuns": 0, "totalBases": hits}
+    line.update(extra)
+    return line
+
+
+def test_hit_rate_counts_only_games_over_the_line():
+    # 1,2,0,3,1 hits -> three games over 0.5, two over 1.5, one over 2.5.
+    logs = [_hit_log(f"2026-07-0{i + 1}", h) for i, h in enumerate([1, 2, 0, 3, 1])]
+    out = hit_rates(logs, {"hits": [0.5, 1.5, 2.5]}, games=10)
+    cells = out["markets"]["hits"]
+    assert (cells["0.5"]["hit"], cells["0.5"]["of"]) == (4, 5)
+    assert (cells["1.5"]["hit"], cells["1.5"]["of"]) == (2, 5)
+    assert (cells["2.5"]["hit"], cells["2.5"]["of"]) == (1, 5)
+    assert cells["1.5"]["rate"] == pytest.approx(0.4)
+
+
+def test_hit_rate_window_takes_the_most_recent_games():
+    """The window is the last N, not the first N -- an old hot streak must not
+    outrank a current cold one."""
+    logs = [_hit_log(f"2026-06-{i + 10}", 3) for i in range(10)]      # old: all overs
+    logs += [_hit_log(f"2026-07-{i + 10}", 0) for i in range(10)]     # recent: none
+    out = hit_rates(logs, {"hits": [0.5]}, games=10)
+    assert out["games"] == 10
+    assert out["markets"]["hits"]["0.5"]["hit"] == 0
+    assert out["from"] == "2026-07-10"
+
+
+def test_hit_rate_skips_games_the_hitter_did_not_bat_in():
+    logs = [_hit_log("2026-07-01", 1), _hit_log("2026-07-02", 0, pa=0),
+            _hit_log("2026-07-03", 2)]
+    out = hit_rates(logs, {"hits": [0.5]}, games=10)
+    assert out["games"] == 2                        # the 0-PA game is not a game
+    assert out["markets"]["hits"]["0.5"]["hit"] == 2
+
+
+def test_pitcher_hit_rate_counts_starts_not_appearances():
+    """A starter's relief cameo must not consume one of the five slots -- it
+    would drag every counting stat down for a reason unrelated to his form."""
+    starts = [{"_date": f"2026-07-0{i + 1}", "gamesStarted": 1, "strikeOuts": 6,
+               "outs": 18} for i in range(5)]
+    relief = {"_date": "2026-07-06", "gamesStarted": 0, "strikeOuts": 0, "outs": 3}
+    out = hit_rates(starts + [relief], {"pitcher_strikeouts": [5.5]},
+                    games=5, starts_only=True)
+    assert out["games"] == 5
+    assert out["basis"] == "starts"
+    assert out["markets"]["pitcher_strikeouts"]["5.5"]["hit"] == 5
+
+
+def test_hit_rate_derives_singles_like_the_simulator():
+    """`singles` is not a StatsAPI field; it must be hits minus extra-base hits
+    so the historical column and the projected column mean the same thing."""
+    logs = [_hit_log("2026-07-01", 3, doubles=1, triples=0, homeRuns=1)]  # 1 single
+    out = hit_rates(logs, {"singles": [0.5, 1.5]}, games=10)
+    assert out["markets"]["singles"]["0.5"]["hit"] == 1
+    assert out["markets"]["singles"]["1.5"]["hit"] == 0
+
+
+def test_hit_rate_is_empty_without_history():
+    """Empty, not zeroed -- 'never played' and 'never cleared it' are different
+    claims and the page renders them differently."""
+    assert hit_rates([], {"hits": [0.5]}, games=10) == {}
+    assert hit_rates([_hit_log("2026-07-01", 0, pa=0)], {"hits": [0.5]},
+                     games=10) == {}
+
+
+def test_hit_rate_sample_size_is_uniform_across_markets():
+    """Every market is counted over the same games, which is what lets the
+    artifact drop the per-cell `of` and fall back to the parent `games`."""
+    logs = [_hit_log(f"2026-07-0{i + 1}", i) for i in range(5)]
+    out = hit_rates(logs, {"hits": [0.5, 1.5], "runs": [0.5]}, games=10)
+    for lines in out["markets"].values():
+        for cell in lines.values():
+            assert cell["of"] == out["games"]
+
+
+def test_recent_appearances_respects_a_short_history():
+    logs = [_hit_log("2026-07-01", 1), _hit_log("2026-07-02", 2)]
+    assert len(recent_appearances(logs, 10)) == 2
 
 
 def test_shrinkage_pulls_small_samples_to_league():

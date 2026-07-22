@@ -30,10 +30,21 @@ def trim(payload: dict) -> dict:
     ``lines`` is pure redundancy: every over/under/push probability in it can
     be recomputed from the PMF, which the page already ships for its charts.
     Dropping it roughly halves the file.
+
+    Hit-rate cells are redundant the same way. ``of`` is the player's game count,
+    identical for every line and already on the parent as ``games``, and ``rate``
+    is just ``hit / of`` -- so each cell collapses from a three-key object to a
+    bare integer, which is ~350 KB on a full slate. The slate JSON keeps the
+    self-describing form; only the shipped page pays for brevity, and the reader
+    of the page never sees the difference.
     """
     out = json.loads(json.dumps(payload))  # deep copy
     for game in out.get("games", []):
         for player in game.get("players", []):
+            rates = (player.get("context") or {}).get("hit_rates") or {}
+            for lines in (rates.get("markets") or {}).values():
+                for ln, cell in list(lines.items()):
+                    lines[ln] = cell["hit"]
             for market in player.get("markets", {}).values():
                 market.pop("lines", None)
                 pmf = market.get("pmf") or {}

@@ -165,6 +165,30 @@ Four views, all filterable by game, market, side, role, player, and minimum EV:
 Sorting is by column click, there is a CSV export, and the theme follows your
 system with a manual toggle. Served from `localhost` unless you pass `--host`.
 
+### Hit rates
+
+Every prop row carries how often the player has actually cleared *that line*
+recently — **last 10 games** for a hitter, **last 5 starts** for a pitcher.
+Pitchers are counted in starts rather than games because a starter appears every
+fifth day, so ten games would reach back nearly two months and stop describing
+anything current; relief cameos are excluded via `gamesStarted`, since an
+opener appearance is not a start and would drag the counts down for a reason
+that has nothing to do with form.
+
+The column shows the count (`7/10`) next to the rate, because "70%" and "7 of
+10" invite very different confidence and only one of them is honest about the
+sample. It is styled more quietly than the model's probability on purpose.
+
+**This is displayed, not modelled.** It deliberately feeds nothing: the
+projection already weights recent games via exponential decay across the whole
+season, which is a strictly better estimator than a hard cutoff at 10. A hit
+rate ignores the price, the opponent, the park, and the batting order the player
+happened to occupy, and at n=10 — let alone n=5 — its standard error is large
+enough that a 7/10 and a 5/10 are rarely distinguishable. It is on the board
+because it is the most-quoted number in prop betting and worth seeing *beside*
+the model rather than instead of it; where the two disagree is the interesting
+part, and usually the model is right about why.
+
 ### Auto-refresh
 
 Lineups post piecemeal in the couple of hours before first pitch, and they are
@@ -264,7 +288,7 @@ mlbprops/
   savant.py      park factors (bundled data in parks_data.py)
   parks.py       venue lookup, factors, coordinates, orientation
   weather.py     Open-Meteo first-pitch conditions
-  rates.py       recency weighting, park neutralization, EB shrinkage
+  rates.py       recency weighting, park neutralization, EB shrinkage, hit rates
   matchup.py     odds-ratio combination, platoon, park, weather, TTO
   sim.py         vectorized full-game Monte Carlo
   markets.py     simulated distributions -> prop probabilities

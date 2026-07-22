@@ -17,8 +17,11 @@ import numpy as np
 
 from .constants import LEAGUE_GB_RATE, LEAGUE_RATE_VECTOR, N_OUTCOMES, O_K
 from .markets import (
+    BATTER_MARKETS,
+    PITCHER_MARKETS,
     PlayerProjection,
     batter_distributions,
+    common_lines,
     game_markets,
     pitcher_distributions,
 )
@@ -29,6 +32,7 @@ from .rates import (
     estimate_batter,
     estimate_pitcher,
     half_season_park,
+    hit_rates,
     league_baseline,
     recent_form,
 )
@@ -37,6 +41,19 @@ from .statsapi import Game, Lineup, Player, StatsAPI
 from .weather import WeatherClient
 
 log = logging.getLogger(__name__)
+
+# Lookback windows for the displayed hit rates. Ten games is the bettor's
+# convention for hitters and lands on a roughly two-week span. Pitchers get five
+# *starts* instead: a starter appears every fifth day, so ten would reach back
+# nearly two months and stop describing anything current.
+BATTER_HIT_RATE_GAMES = 10
+PITCHER_HIT_RATE_STARTS = 5
+
+# Which lines to count against, per market -- the same standard lines the
+# projection already precomputes, so the historical and modelled columns on a
+# board row always refer to the identical number.
+BATTER_HIT_RATE_LINES = {m: common_lines(m) for m in BATTER_MARKETS}
+PITCHER_HIT_RATE_LINES = {m: common_lines(m) for m in PITCHER_MARKETS}
 
 
 def _bvp_summary(stat: dict | None) -> dict:
@@ -148,6 +165,22 @@ class Projector:
             pass
         return estimate_pitcher(logs, prior, league=self.league_vector(season),
                                 home_park=home_park)
+
+    def _pitching_logs(self, player_id: int, season: int) -> list[dict]:
+        """Pitching game logs for display, never fatal.
+
+        ``pitcher_rates`` has already pulled these for this player earlier in the
+        same projection, so this is a disk-cache hit rather than a second network
+        call -- the same reason ``_hook_params`` refetches rather than threading
+        the list through. A hit-rate column is decoration; if the fetch fails,
+        the projection itself is still sound, so this swallows the error and
+        returns nothing to display.
+        """
+        try:
+            return self.api.game_log(player_id, season, "pitching")
+        except Exception:  # noqa: BLE001
+            log.warning("no pitching logs for %s; hit rates omitted", player_id)
+            return []
 
     def bullpen_rates(self, team_id: int, season: int) -> RateEstimate:
         """The team's actual relief corps, from StatsAPI's ``rp`` situation split.
@@ -427,7 +460,12 @@ class Projector:
                         "effective_pa": round(est.effective_pa, 1) if est else 0,
                         "raw_pa": est.raw_pa if est else 0,
                         "mean_pa": round(float(result.pa[:, team, slot].mean()), 2),
-                        "last10": recent_form(logs_by_id.get(batter.id, []), 10),
+                        "last10": recent_form(logs_by_id.get(batter.id, []),
+                                              BATTER_HIT_RATE_GAMES),
+                        "hit_rates": hit_rates(
+                            logs_by_id.get(batter.id, []),
+                            BATTER_HIT_RATE_LINES,
+                            games=BATTER_HIT_RATE_GAMES),
                         "vs_pitcher": _bvp_summary(bvp.get(batter.id)),
                     },
                 ))
@@ -449,6 +487,11 @@ class Projector:
                     "raw_bf": est.raw_pa,
                     "mean_pitches": round(float(result.sp_pitches[:, team].mean()), 1),
                     "mean_ip": round(float(result.sp_outs[:, team].mean() / 3), 2),
+                    "hit_rates": hit_rates(
+                        self._pitching_logs(pid, season),
+                        PITCHER_HIT_RATE_LINES,
+                        games=PITCHER_HIT_RATE_STARTS,
+                        starts_only=True),
                 },
             ))
 

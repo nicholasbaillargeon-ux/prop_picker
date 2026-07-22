@@ -389,6 +389,103 @@ def recent_form(stat_lines: list[dict], games: int = 10) -> dict:
     }
 
 
+# Internal market name -> how to read that market's value out of a single
+# StatsAPI game-log line. Parsing game logs is this module's job; markets.py
+# owns the *simulated* distributions, which are a different thing that happens
+# to share these names.
+#
+# `singles` and `hits_runs_rbis` are not StatsAPI fields and are derived the
+# same way the simulator derives them, so the historical column and the
+# projected column mean the same thing.
+MARKET_LOG_VALUE = {
+    "hits": lambda s: _num(s, "hits"),
+    "total_bases": lambda s: _num(s, "totalBases"),
+    "home_runs": lambda s: _num(s, "homeRuns"),
+    "rbi": lambda s: _num(s, "rbi"),
+    "runs": lambda s: _num(s, "runs"),
+    "singles": lambda s: max(0.0, _num(s, "hits") - _num(s, "doubles")
+                             - _num(s, "triples") - _num(s, "homeRuns")),
+    "doubles": lambda s: _num(s, "doubles"),
+    "triples": lambda s: _num(s, "triples"),
+    "walks": lambda s: _num(s, "baseOnBalls"),
+    "batter_strikeouts": lambda s: _num(s, "strikeOuts"),
+    "hits_runs_rbis": lambda s: _num(s, "hits") + _num(s, "runs") + _num(s, "rbi"),
+    "pitcher_strikeouts": lambda s: _num(s, "strikeOuts"),
+    "pitcher_outs": lambda s: _num(s, "outs"),
+    "pitcher_earned_runs": lambda s: _num(s, "earnedRuns"),
+    "pitcher_hits_allowed": lambda s: _num(s, "hits"),
+    "pitcher_walks": lambda s: _num(s, "baseOnBalls"),
+}
+
+
+def recent_appearances(stat_lines: list[dict], games: int,
+                       starts_only: bool = False) -> list[dict]:
+    """The last N game-log lines a player actually appeared in.
+
+    Hitters are filtered on plate appearances, so a defensive replacement who
+    never batted does not consume one of the ten slots. Pitchers are filtered on
+    ``gamesStarted``, which StatsAPI sets per line -- a starter's relief cameo or
+    an opener appearance would otherwise be counted as a "start" and drag a
+    strikeout hit rate down for a reason that has nothing to do with his form.
+    """
+    if starts_only:
+        recent = [s for s in stat_lines if _num(s, "gamesStarted") > 0]
+    else:
+        recent = [s for s in stat_lines if _num(s, "plateAppearances") > 0]
+    return recent[-games:]
+
+
+def hit_rates(stat_lines: list[dict], lines_by_market: dict[str, list[float]],
+              *, games: int, starts_only: bool = False) -> dict:
+    """How often a player cleared each prop line in his last N appearances.
+
+    This is a *descriptive* counter, not an estimator, and it is deliberately
+    kept away from anything that feeds the projection. A 7-of-10 hit rate is the
+    single most quoted number in prop betting and it is also one of the most
+    misleading: it ignores the line's price, the opponent, the park, and the
+    batting order the player happened to occupy, and at n=10 (or n=5 for
+    pitchers) its standard error is enormous. It is shown so a reader can see
+    the streak *and* see what the model makes of it -- when the model's
+    probability and the hit rate disagree, that gap is the interesting part.
+
+    Counts are exposed alongside the rate (``7`` of ``10``) rather than only a
+    percentage, because "70%" and "7 of 10" invite very different confidence and
+    only one of them is honest about the sample.
+
+    Returns ``{}`` when the player has no qualifying games, so the caller can
+    distinguish "no history" from "never cleared it".
+    """
+    recent = recent_appearances(stat_lines, games, starts_only=starts_only)
+    if not recent:
+        return {}
+
+    out: dict[str, dict] = {}
+    for market, lines in lines_by_market.items():
+        getter = MARKET_LOG_VALUE.get(market)
+        if getter is None or not lines:
+            continue
+        values = [getter(s) for s in recent]
+        out[market] = {
+            str(ln): {
+                "hit": sum(1 for v in values if v > ln),
+                "of": len(values),
+                "rate": round(sum(1 for v in values if v > ln) / len(values), 3),
+            }
+            for ln in lines
+        }
+
+    if not out:
+        return {}
+    dates = [s.get("_date") for s in recent if s.get("_date")]
+    return {
+        "games": len(recent),
+        "basis": "starts" if starts_only else "games",
+        "from": dates[0] if dates else None,
+        "to": dates[-1] if dates else None,
+        "markets": out,
+    }
+
+
 def league_baseline(league_totals: dict) -> np.ndarray:
     """Build the league PA-outcome vector from StatsAPI league hitting totals.
 

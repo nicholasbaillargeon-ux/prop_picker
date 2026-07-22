@@ -107,6 +107,11 @@ td.name { font-weight: 500; }
 .bar { width: 78px; height: 5px; border-radius: 3px; background: var(--track); overflow: hidden; }
 .bar > i { display: block; height: 100%; border-radius: 3px; background: var(--series-1); }
 .odds { font-variant-numeric: tabular-nums; }
+/* Intentionally quieter than .prob: a 10-game count is a much weaker number
+   than a 20,000-sim probability and should not read as its equal. */
+.hitrate { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.hitrate .hr-frac { font-variant-numeric: tabular-nums; }
+.hitrate .hr-pct { font-size: 11px; }
 
 tr.detail > td { background: var(--plane); padding: 16px 18px; white-space: normal; }
 .detailgrid { display: grid; grid-template-columns: minmax(280px, 460px) 1fr;
@@ -379,6 +384,35 @@ function probCell(p) {
     el("span", {class: "pv"}, pct(p)),
     el("span", {class: "pw"}, inWords(p)),
     bar);
+}
+
+// How often the player cleared this exact line recently -- last 10 games for a
+// hitter, last 5 starts for a pitcher. Returns null when there is no history, so
+// callers can render "—" instead of a misleading 0%.
+// The cell is either the slate's self-describing {hit, of, rate} or, in the
+// exported artifact, a bare hit count -- build_artifact.py drops the two derived
+// keys to save ~350 KB. Both shapes reduce to the same thing here.
+function hitRateAt(context, market, line) {
+  const hr = context && context.hit_rates;
+  const byLine = hr && hr.markets && hr.markets[market];
+  const cell = byLine && byLine[String(line)];
+  if (cell === undefined || cell === null) return null;
+  const hit = typeof cell === "object" ? cell.hit : cell;
+  const of = (typeof cell === "object" && cell.of != null) ? cell.of : hr.games;
+  if (!of) return null;
+  const rate = (typeof cell === "object" && cell.rate != null) ? cell.rate : hit / of;
+  return {rate, hit, of, basis: hr.basis, from: hr.from, to: hr.to};
+}
+
+// The historical rate and the model's probability are different kinds of number
+// and are deliberately styled differently: the model gets the bar, the hit rate
+// gets a plain "7/10". Making them look alike would invite reading a 5-start
+// sample as if it carried the same weight as 20,000 simulations.
+function hitRateCell(h) {
+  if (!h) return el("span", {class: "dim"}, "—");
+  return el("div", {class: "hitrate"},
+    el("span", {class: "hr-frac"}, `${h.hit}/${h.of}`),
+    el("span", {class: "hr-pct dim"}, pct(h.rate)));
 }
 
 function overFromPmf(pmf, line) {
@@ -913,11 +947,13 @@ function propRows() {
       const over = overAt(m, ln);
       const rec = recs.find(r => r.player === p.name && r.game === g.label
         && r.market === state.market && r.line === ln && r.side === "Over");
+      const hr = hitRateAt(p.context, state.market, ln);
       out.push({
         player: p.name, team: p.team, game: g.label,
         slot: p.lineup_slot ?? "—", is_pitcher: p.is_pitcher,
         proj: m.mean, p10: m.p10, p90: m.p90, line: ln,
         over, under: 1 - over, pmf: m.pmf, context: p.context,
+        hitRate: hr ? hr.rate : null, hr,
         confirmed: g.lineups_confirmed, gameRef: g,
         ev: rec ? rec.ev : null, book: rec ? rec.best_book : null,
         price: rec ? rec.best_american : null,
@@ -952,17 +988,25 @@ function propsView() {
       "Confirmed lineups only"));
 
   const outsMarket = state.market === "pitcher_outs";
+  const isPitcher = MARKET_GROUP_OF[state.market] === "Pitching";
+  // Column tuples are [sortKey, header, leftAlign?, dupKey?]. `dupKey` marks a
+  // column that reuses another's sort key ("Fair odds" is just the over
+  // probability in another notation) so only the first of the pair draws the
+  // sort arrow. This used to be a hardcoded `i !== 6`, which silently pointed at
+  // the wrong column as soon as the optional Innings column shifted the indices.
   const cols = [["player", "Player", true], ["game", "Game", true], ["slot", "Slot"],
     ["proj", "Projected"]];
-  if (outsMarket) cols.push(["proj", "Innings"]);
-  cols.push(["line", "Line"], ["over", "Chance of over"], ["over", "Fair odds"]);
+  if (outsMarket) cols.push(["proj", "Innings", false, true]);
+  cols.push(["line", "Line"], ["over", "Chance of over"],
+    ["hitRate", isPitcher ? "Last 5 starts" : "Last 10"],
+    ["over", "Fair odds", false, true]);
   if (showOdds) cols.push(["price", "Best price"], ["ev", "EV"]);
 
-  const thead = el("thead", {}, el("tr", {}, ...cols.map(([k, t, l], i) =>
+  const thead = el("thead", {}, el("tr", {}, ...cols.map(([k, t, l, dup]) =>
     el("th", {class: l ? "l" : "", onclick: () => {
       state.propSort = {key: k, dir: state.propSort.key === k ? -state.propSort.dir : -1};
       render();
-    }}, t, state.propSort.key === k && i !== 6
+    }}, t, state.propSort.key === k && !dup
       ? el("span", {class: "arrow"}, state.propSort.dir < 0 ? " ↓" : " ↑") : ""))));
 
   const tbody = el("tbody", {});
@@ -980,6 +1024,7 @@ function propsView() {
       el("td", {class: "dim"},
         "o" + r.line + (outsMarket ? ` (${ipNotation(Math.ceil(r.line))})` : "")),
       el("td", {}, probCell(r.over)),
+      el("td", {}, hitRateCell(r.hr)),
       el("td", {class: "odds dim"}, fairOdds(r.over)));
     if (showOdds) {
       tr.appendChild(el("td", {class: "odds"},
@@ -996,6 +1041,13 @@ function propsView() {
       add(`Clears ${r.line}`, `${pct(r.over)} — ${inWords(r.over)}`);
       add("Stays under", `${pct(r.under)} — ${inWords(r.under)}`);
       add("Model fair odds", `${fairOdds(r.over)} over / ${fairOdds(r.under)} under`);
+      // Sits directly under the model's number so the two are read together --
+      // the gap between them is the point, not the hit rate on its own.
+      if (r.hr) {
+        add(r.hr.basis === "starts" ? "Last 5 starts" : "Last 10 games",
+          `${r.hr.hit} of ${r.hr.of} cleared ${r.line} (${pct(r.hr.rate)})`);
+        if (r.hr.from && r.hr.to) add("Span", `${r.hr.from} → ${r.hr.to}`);
+      }
       if (r.price !== null) {
         add("Best book price", `${american(r.price)} @ ${r.book}`);
         add("Market probability", pct(r.market_prob));
