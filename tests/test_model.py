@@ -168,6 +168,62 @@ def test_recent_appearances_respects_a_short_history():
     assert len(recent_appearances(logs, 10)) == 2
 
 
+def _game_proj(pk, away, home, start):
+    from types import SimpleNamespace
+
+    from mlbprops.pipeline import GameProjection
+    return GameProjection(
+        game=SimpleNamespace(game_pk=pk, away_team=away, home_team=home,
+                             game_date=start),
+        park={}, weather={})
+
+
+def test_slate_sorts_by_first_pitch():
+    """StatsAPI returns the schedule grouped, not chronologically -- both halves
+    of a doubleheader come back together, putting a night game second."""
+    from mlbprops.pipeline import _slate_order
+
+    games = [_game_proj(1, "PIT", "NYY", "2026-07-22T17:05:00Z"),
+             _game_proj(2, "PIT", "NYY", "2026-07-22T23:05:00Z"),
+             _game_proj(3, "BAL", "BOS", "2026-07-22T17:35:00Z")]
+    games.sort(key=_slate_order)
+    assert [g.game.game_pk for g in games] == [1, 3, 2]
+
+
+def test_games_without_a_start_time_sort_last_not_crash():
+    from mlbprops.pipeline import _slate_order
+
+    games = [_game_proj(1, "A", "B", None),
+             _game_proj(2, "C", "D", "2026-07-22T17:05:00Z")]
+    games.sort(key=_slate_order)
+    assert [g.game.game_pk for g in games] == [2, 1]
+
+
+def test_doubleheader_labels_are_unique():
+    """The dashboard filters on the label, so two identical labels make one
+    selection match both games and show every player twice."""
+    from mlbprops.pipeline import _assign_labels
+
+    games = [_game_proj(1, "PIT", "NYY", "2026-07-22T17:05:00Z"),
+             _game_proj(2, "PIT", "NYY", "2026-07-22T23:05:00Z"),
+             _game_proj(3, "BAL", "BOS", "2026-07-22T17:35:00Z")]
+    _assign_labels(games)
+    labels = [g.label for g in games]
+    assert labels == ["PIT @ NYY (G1)", "PIT @ NYY (G2)", "BAL @ BOS"]
+    assert len(set(labels)) == len(labels)
+
+
+def test_single_games_keep_a_plain_label():
+    """Only repeated matchups get a suffix -- a normal slate must read as it
+    always has."""
+    from mlbprops.pipeline import _assign_labels
+
+    games = [_game_proj(1, "PIT", "NYY", "2026-07-22T17:05:00Z"),
+             _game_proj(2, "BAL", "BOS", "2026-07-22T17:35:00Z")]
+    _assign_labels(games)
+    assert [g.label for g in games] == ["PIT @ NYY", "BAL @ BOS"]
+
+
 def test_every_market_has_log_extraction():
     """A market the projection prices but the log parser cannot read would show
     a blank hit-rate column with no error anywhere."""

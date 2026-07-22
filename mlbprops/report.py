@@ -111,7 +111,10 @@ def build_recommendations(
         book_counts.setdefault(
             (ln.market, ln.player, ln.point, ln.side), set()).add(ln.book)
 
-    label = f"{game_proj.game.away_team} @ {game_proj.game.home_team}"
+    # project_slate assigns this, disambiguating doubleheaders; the fallback
+    # keeps a hand-built GameProjection (tests, one-off scripts) working.
+    label = (game_proj.label
+             or f"{game_proj.game.away_team} @ {game_proj.game.home_team}")
     out: list[Recommendation] = []
     unmatched: set[str] = set()
 
@@ -361,7 +364,8 @@ def slate_payload(
             })
         games.append({
             "game_pk": gp.game.game_pk,
-            "label": f"{gp.game.away_team} @ {gp.game.home_team}",
+            "label": (gp.label
+                      or f"{gp.game.away_team} @ {gp.game.home_team}"),
             "away_team": gp.game.away_team,
             "home_team": gp.game.home_team,
             "start_utc": gp.game.game_date,

@@ -56,6 +56,42 @@ BATTER_HIT_RATE_LINES = {m: common_lines(m) for m in BATTER_MARKETS}
 PITCHER_HIT_RATE_LINES = {m: common_lines(m) for m in PITCHER_MARKETS}
 
 
+def _slate_order(gp: "GameProjection") -> tuple:
+    """Sort key putting the slate in first-pitch order.
+
+    StatsAPI returns the schedule grouped rather than strictly by time, which is
+    almost chronological but puts both halves of a doubleheader together -- so a
+    7pm game lands second on the board, between two afternoon ones. Games with no
+    start time sort last rather than crashing the comparison, and game_pk breaks
+    ties so two games at the same first pitch keep a stable order between runs.
+    """
+    return (gp.game.game_date or "9999", gp.game.game_pk)
+
+
+def _assign_labels(projections: list["GameProjection"]) -> None:
+    """Give every game a label that is unique on the slate.
+
+    A doubleheader produces two games with identical team names, and the
+    dashboard keys its game filter on the label -- so without this, selecting
+    that matchup matches *both* games and the board shows each player twice with
+    two different projections. Only repeated matchups get a suffix, so the usual
+    slate reads exactly as it always has.
+    """
+    seen: dict[str, int] = {}
+    for gp in projections:
+        base = f"{gp.game.away_team} @ {gp.game.home_team}"
+        seen[base] = seen.get(base, 0) + 1
+    counts = dict(seen)
+    nth: dict[str, int] = {}
+    for gp in projections:
+        base = f"{gp.game.away_team} @ {gp.game.home_team}"
+        if counts[base] == 1:
+            gp.label = base
+            continue
+        nth[base] = nth.get(base, 0) + 1
+        gp.label = f"{base} (G{nth[base]})"
+
+
 def _bvp_summary(stat: dict | None) -> dict:
     """Compact career batter-vs-pitcher line, or empty when never faced."""
     if not stat:
@@ -95,6 +131,9 @@ class GameProjection:
     bullpen: dict = field(default_factory=dict)
     game_markets: dict = field(default_factory=dict)
     lineup_order: dict = field(default_factory=dict)
+    # Assigned by project_slate, which is the only place that can see the whole
+    # slate and therefore the only place that knows a matchup appears twice.
+    label: str = ""
 
 
 class Projector:
@@ -564,4 +603,6 @@ class Projector:
                 out.append(gp)
                 log.info("projected %s @ %s (%s)", g.away_team, g.home_team,
                          "confirmed" if gp.lineups_confirmed else "projected")
+        out.sort(key=_slate_order)
+        _assign_labels(out)
         return out

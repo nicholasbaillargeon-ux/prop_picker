@@ -426,6 +426,16 @@ function hitRateForSide(context, market, line, side) {
   return {...h, hit, rate: h.of ? hit / h.of : 0};
 }
 
+// First pitch in the reader's own timezone. The slate is ordered by this, so it
+// has to be visible or the ordering looks arbitrary. Falls back to an empty
+// string rather than "Invalid Date" when the schedule has no start time yet.
+function firstPitch(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  return d.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+}
+
 function overFromPmf(pmf, line) {
   let over = 0, total = 0;
   for (const [k, v] of Object.entries(pmf || {})) { total += v; if (+k > line) over += v; }
@@ -590,8 +600,15 @@ function marketPicker(onChange, value) {
 function gameSelect() {
   return el("select", {onchange: e => { state.game = e.target.value; render(); }},
     el("option", {value: "all"}, "All games"),
-    ...(DATA.games || []).map(g =>
-      el("option", {value: g.label, selected: state.game === g.label ? "selected" : null}, g.label)));
+    // Prefixed with first pitch so the list reads in the order it is sorted in,
+    // and so the two halves of a doubleheader are told apart by time rather
+    // than by a bare "(G1)".
+    ...(DATA.games || []).map(g => {
+      const t = firstPitch(g.start_utc);
+      return el("option", {value: g.label,
+        selected: state.game === g.label ? "selected" : null},
+        (t ? t + " — " : "") + g.label);
+    }));
 }
 
 function oddsBanner() {
@@ -916,7 +933,8 @@ function gamesView() {
     const head = el("div", {class: "mhead"},
       el("h3", {}, g.label),
       el("span", {class: "meta"},
-        `${g.venue} · ${g.status} · park HR ${g.park?.pf_hr ?? "—"} / runs ${g.park?.pf_runs ?? "—"} · ${g.park?.roof || ""} · ${wx}`),
+        [firstPitch(g.start_utc), g.venue, g.status].filter(Boolean).join(" · ")
+        + ` · park HR ${g.park?.pf_hr ?? "—"} / runs ${g.park?.pf_runs ?? "—"} · ${g.park?.roof || ""} · ${wx}`),
       g.lineups_confirmed ? "" : el("span", {class: "pill warnflag"}, "⚠ lineups projected"));
 
     const gameRow = el("div", {class: "mgame"});
