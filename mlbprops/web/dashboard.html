@@ -973,7 +973,8 @@ function propRows() {
         slot: p.lineup_slot ?? "—", is_pitcher: p.is_pitcher,
         proj: m.mean, p10: m.p10, p90: m.p90, line: ln,
         over, under: 1 - over, pmf: m.pmf, context: p.context,
-        hitRate: hr ? hr.rate : null, hr,
+        hitRate: hr ? hr.rate : null, hitOf: hr ? hr.hit : null,
+        hitGames: hr ? hr.of : null, hr,
         confirmed: g.lineups_confirmed, gameRef: g,
         ev: rec ? rec.ev : null, book: rec ? rec.best_book : null,
         price: rec ? rec.best_american : null,
@@ -1151,9 +1152,13 @@ $("#theme").addEventListener("click", () => {
 $("#csv").addEventListener("click", () => {
   const rows = propRows();
   if (!rows.length) { alert("Nothing to export in the current view."); return; }
-  const cols = ["player", "team", "game", "slot", "proj", "line", "over", "under", "price", "book", "ev"];
+  // `hit_of` and `hit_games` travel with `hit_rate` so a spreadsheet reader can
+  // see the sample the rate came off, which is the whole point of showing it.
+  const cols = ["player", "team", "game", "slot", "proj", "line", "over", "under",
+    "hitRate", "hitOf", "hitGames", "price", "book", "ev"];
   const head = ["player", "team", "game", "slot", "projected", "line",
-    "chance_over", "chance_under", "best_price", "book", "ev"];
+    "chance_over", "chance_under", "hit_rate", "hit_of", "hit_games",
+    "best_price", "book", "ev"];
   const csv = [head.join(",")].concat(rows.map(r =>
     cols.map(c => JSON.stringify(r[c] ?? "")).join(","))).join("\n");
   const url = URL.createObjectURL(new Blob([csv], {type: "text/csv"}));
