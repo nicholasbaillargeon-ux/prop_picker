@@ -1,8 +1,8 @@
 {
   "name": "MLB prop model \u2014 daily refresh",
-  "cron_expression": "0 0,16-23 * * *",
+  "cron_expression": "7 0-4,14-23 * * *",
   "enabled": true,
-  "_comment": "hourly 12pm-8pm ET (16:00-00:00 UTC during EDT)",
+  "_comment": "hourly 10am-midnight ET (14:00-04:00 UTC during EDT). Covers lineup posting through the end of west-coast games; the overnight hours are skipped because nothing changes then.",
   "job_config": {
     "ccr": {
       "environment_id": "env_01DVB54VVswiUnhLoiypf8wN",

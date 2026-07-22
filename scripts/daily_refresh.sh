@@ -16,7 +16,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-DATE="${1:-$(date -u +%F)}"
+# The slate date is an Eastern-time calendar date, not a UTC one. Those diverge
+# for the four hours between 8pm ET and midnight ET, when UTC has already rolled
+# over but tonight's games are still being played -- so a UTC date there asks for
+# *tomorrow's* schedule, which has no lineups yet, and publishes that over a live
+# board. Ask for the date in the timezone MLB actually schedules in.
+DATE="${1:-$(TZ=America/New_York date +%F)}"
 SIMS="${SIMS:-20000}"
 
 echo "=== MLB prop refresh: ${DATE} (${SIMS} sims/game) ==="
